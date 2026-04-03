@@ -21,7 +21,7 @@ from scrubber import scrub_pii, init_scrubber, get_scrubber_stats
 from rate_limiter import check_rate_limit, init_redis, get_rate_limit_stats
 from audit_logger import (
     add_entry, get_recent, get_stats, get_by_key,
-    get_latest, get_client_stats,
+    get_latest, get_client_stats, init_db, get_total_count
 )
 from mock_llm import generate_response
 
@@ -153,8 +153,14 @@ async def lifespan(app: FastAPI):
         print("✅ spaCy NER PII scrubber active")
     else:
         print("⚠️  spaCy unavailable — using regex-only scrubber")
-    seed_audit_logs()
-    print("✅ ShieldProxy started — 50 seed entries loaded.")
+    # Initialize persistent SQLite Audit Logger
+    init_db()
+    
+    if get_total_count() == 0:
+        seed_audit_logs()
+        print("✅ ShieldProxy started — 50 seed entries loaded into SQLite DB.")
+    else:
+        print(f"✅ ShieldProxy started — Database connected ({get_total_count()} logs).")
     yield
 
 

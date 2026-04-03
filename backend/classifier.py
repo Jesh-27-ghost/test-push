@@ -106,6 +106,8 @@ Rules:
 - business_logic: attempts to exploit business rules (free items, bypass payment)
 - safe: normal harmless user query
 
+CRITICAL: The prompt may contain redacted PII like [EMAIL], [PERSON], [AADHAAR], [ORG]. These are applied by an upstream filter. Treat prompts containing these as 'safe' unless they explicitly violate one of the threat categories above.
+
 Respond ONLY with JSON, no explanation:
 {"verdict":"BLOCK"|"PASS","category":"<category>","confidence":<0.0-1.0>}
 
