@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from classifier import classify_prompt
+from classifier import classify_prompt, classify_prompt_sync, init_ollama, get_classifier_stats
 from scrubber import scrub_pii
 from rate_limiter import check_rate_limit, init_redis, get_rate_limit_stats
 from audit_logger import (
@@ -112,7 +112,7 @@ def seed_audit_logs():
         offset = random.uniform(0, 86400)  # 0 to 24h in seconds
         ts = now - offset
 
-        result = classify_prompt(prompt)
+        result = classify_prompt_sync(prompt)
         api_key = random.choice(SEED_API_KEYS)
         latency = round(random.uniform(12, 85), 2)
         ips = ["192.168.1.42", "10.0.0.15", "172.16.0.8", "203.0.113.50", "198.51.100.23"]
@@ -141,6 +141,12 @@ async def lifespan(app: FastAPI):
         print("✅ Redis token bucket rate limiter active")
     else:
         print("⚠️  Redis unavailable — using in-memory rate limiter")
+    # Initialize Ollama Llama 3 8B classifier
+    ollama_ok = await init_ollama()
+    if ollama_ok:
+        print("✅ Ollama Llama 3 8B threat classifier active")
+    else:
+        print("⚠️  Ollama unavailable — using keyword-only classifier")
     seed_audit_logs()
     print("✅ ShieldProxy started — 50 seed entries loaded.")
     yield
@@ -196,9 +202,9 @@ async def chat(
     # 2. PII scrub
     scrubbed, pii_found = scrub_pii(body.prompt)
 
-    # 3. Classify (measure latency)
+    # 3. Classify via Ollama pipeline (measure latency)
     start = time.time()
-    result = classify_prompt(scrubbed)
+    result = await classify_prompt(scrubbed)
     latency_ms = round((time.time() - start) * 1000, 2)
 
     request_id = str(uuid.uuid4())
@@ -265,13 +271,23 @@ async def clients():
 @app.get("/v1/health")
 async def health():
     rl_stats = get_rate_limit_stats()
+    cl_stats = get_classifier_stats()
     return {
         "status": "ok",
         "uptime_seconds": round(time.time() - _start_time, 1),
         "total_requests_served": get_stats()["total_requests"],
         "rate_limiter": rl_stats["backend"],
         "redis_connected": rl_stats["redis_connected"],
+        "classifier": "ollama" if cl_stats["ollama_connected"] else "keyword",
+        "ollama_connected": cl_stats["ollama_connected"],
+        "ollama_model": cl_stats["model"],
     }
+
+
+@app.get("/v1/classifier")
+async def classifier_status():
+    """Returns Ollama classifier performance stats."""
+    return get_classifier_stats()
 
 
 @app.get("/v1/rate-limit")
@@ -304,7 +320,7 @@ async def simulate(body: SimulateRequest):
     scrubbed, pii_found = scrub_pii(body.prompt)
 
     start = time.time()
-    result = classify_prompt(scrubbed)
+    result = await classify_prompt(scrubbed)
     latency_ms = round((time.time() - start) * 1000, 2)
 
     request_id = str(uuid.uuid4())
