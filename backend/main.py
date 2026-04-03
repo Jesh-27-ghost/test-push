@@ -18,7 +18,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from classifier import classify_prompt
 from scrubber import scrub_pii
-from rate_limiter import check_rate_limit
+from rate_limiter import check_rate_limit, init_redis, get_rate_limit_stats
 from audit_logger import (
     add_entry, get_recent, get_stats, get_by_key,
     get_latest, get_client_stats,
@@ -135,6 +135,12 @@ def seed_audit_logs():
 async def lifespan(app: FastAPI):
     global _start_time
     _start_time = time.time()
+    # Initialize Redis token bucket (falls back to in-memory if unavailable)
+    redis_ok = init_redis(host="localhost", port=6379, db=0)
+    if redis_ok:
+        print("✅ Redis token bucket rate limiter active")
+    else:
+        print("⚠️  Redis unavailable — using in-memory rate limiter")
     seed_audit_logs()
     print("✅ ShieldProxy started — 50 seed entries loaded.")
     yield
@@ -258,11 +264,20 @@ async def clients():
 
 @app.get("/v1/health")
 async def health():
+    rl_stats = get_rate_limit_stats()
     return {
         "status": "ok",
         "uptime_seconds": round(time.time() - _start_time, 1),
         "total_requests_served": get_stats()["total_requests"],
+        "rate_limiter": rl_stats["backend"],
+        "redis_connected": rl_stats["redis_connected"],
     }
+
+
+@app.get("/v1/rate-limit")
+async def rate_limit_status():
+    """Returns rate limiter configuration and status."""
+    return get_rate_limit_stats()
 
 
 @app.get("/v1/stream")
