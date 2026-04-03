@@ -5,3 +5,4 @@ httpx
 python-multipart
 sse-starlette
 redis
+spacy

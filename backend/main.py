@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from classifier import classify_prompt, classify_prompt_sync, init_ollama, get_classifier_stats
-from scrubber import scrub_pii
+from scrubber import scrub_pii, init_scrubber, get_scrubber_stats
 from rate_limiter import check_rate_limit, init_redis, get_rate_limit_stats
 from audit_logger import (
     add_entry, get_recent, get_stats, get_by_key,
@@ -147,6 +147,12 @@ async def lifespan(app: FastAPI):
         print("✅ Ollama Llama 3 8B threat classifier active")
     else:
         print("⚠️  Ollama unavailable — using keyword-only classifier")
+    # Initialize spaCy NER scrubber
+    spacy_ok = init_scrubber()
+    if spacy_ok:
+        print("✅ spaCy NER PII scrubber active")
+    else:
+        print("⚠️  spaCy unavailable — using regex-only scrubber")
     seed_audit_logs()
     print("✅ ShieldProxy started — 50 seed entries loaded.")
     yield
@@ -272,6 +278,7 @@ async def clients():
 async def health():
     rl_stats = get_rate_limit_stats()
     cl_stats = get_classifier_stats()
+    sc_stats = get_scrubber_stats()
     return {
         "status": "ok",
         "uptime_seconds": round(time.time() - _start_time, 1),
@@ -281,6 +288,8 @@ async def health():
         "classifier": "ollama" if cl_stats["ollama_connected"] else "keyword",
         "ollama_connected": cl_stats["ollama_connected"],
         "ollama_model": cl_stats["model"],
+        "scrubber": "regex+spacy" if sc_stats["spacy_available"] else "regex",
+        "spacy_available": sc_stats["spacy_available"],
     }
 
 
@@ -288,6 +297,12 @@ async def health():
 async def classifier_status():
     """Returns Ollama classifier performance stats."""
     return get_classifier_stats()
+
+
+@app.get("/v1/scrubber")
+async def scrubber_status():
+    """Returns PII scrubber configuration and status."""
+    return get_scrubber_stats()
 
 
 @app.get("/v1/rate-limit")
